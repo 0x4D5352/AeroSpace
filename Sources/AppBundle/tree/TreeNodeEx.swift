@@ -74,8 +74,6 @@ extension TreeNode {
         set { setWeight(.v, newValue) }
     }
 
-    func getCenter() -> CGPoint? { getRect()?.center }
-
     /// Returns closest parent that has children in specified direction relative to `self`
     func closestParent(
         hasChildrenInDirection direction: CardinalDirection,

@@ -130,10 +130,6 @@ class TreeNode: Equatable {
     }
     @discardableResult
     func cleanUserData<T>(key: TreeNodeUserDataKey<T>) -> T? { userData.removeValue(forKey: key.key) as! T? }
-
-    @discardableResult
-    func nativeFocus() -> Bool { error("Not implemented") }
-    func getRect() -> Rect? { error("Not implemented") }
 }
 
 struct TreeNodeUserDataKey<T> {

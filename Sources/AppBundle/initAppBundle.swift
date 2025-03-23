@@ -23,44 +23,63 @@ import Foundation
     AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), 1.0)
     startUnixSocketServer()
     GlobalObserver.initObserver()
-    refreshAndLayout(.startup1, screenIsDefinitelyUnlocked: false, startup: true)
-    refreshSession(.startup2, screenIsDefinitelyUnlocked: false) {
-        if serverArgs.startedAtLogin {
-            _ = config.afterLoginCommand.runCmdSeq(.defaultEnv, .emptyStdin)
-        }
-        _ = config.afterStartupCommand.runCmdSeq(.defaultEnv, .emptyStdin)
-    }
-
-    Task.detached {
-        let thread = Thread {
-            let timer = CFRunLoopTimerCreateWithHandler(
-                    kCFAllocatorDefault,
-                    CFAbsoluteTimeGetCurrent(),
-                    10000, 0, 0
-                    ) { _ in }
-            CFRunLoopAddTimer(CFRunLoopGetCurrent(), timer, .defaultMode)
-
-            // sleep(3)
-            print("CFRunLoopRun")
-            CFRunLoopRun()
-            print("wtf")
-        }
-        thread.name = "suka"
-        thread.start()
-
-        // sleep(3)
-
-        check(thread.isExecuting)
-
-        print("task started")
-        print("Thread.schedule")
-        thread.runInLoopAsync {
-            print("--- 1 \(Thread.current.name ?? "")")
-        }
-        thread.runInLoopAsync {
-            print("--- 2 \(Thread.current.name ?? "")")
+    Task {
+        try await refreshAndLayout(.startup1, screenIsDefinitelyUnlocked: false, startup: true)
+        try await refreshSession(.startup2, screenIsDefinitelyUnlocked: false) {
+            if serverArgs.startedAtLogin {
+                _ = config.afterLoginCommand.runCmdSeq(.defaultEnv, .emptyStdin)
+            }
+            _ = config.afterStartupCommand.runCmdSeq(.defaultEnv, .emptyStdin)
         }
     }
+
+    let thread = Thread {
+        print("start run loop")
+        CFRunLoopRun()
+        print("exit run loop")
+    }
+    thread.start()
+    // thread.runInLoopAsync { job in
+    // }
+    thread.runInLoopAsync { job in
+        sleep(3)
+        print("signal to stop run loop")
+        CFRunLoopStop(CFRunLoopGetCurrent())
+    }
+    thread.runInLoopAsync { job in
+        print("submitted later")
+    }
+
+    // Task.detached {
+    //     let thread = Thread {
+    //         let timer = CFRunLoopTimerCreateWithHandler(
+    //                 kCFAllocatorDefault,
+    //                 CFAbsoluteTimeGetCurrent(),
+    //                 10000, 0, 0
+    //                 ) { _ in }
+    //         CFRunLoopAddTimer(CFRunLoopGetCurrent(), timer, .defaultMode)
+    //
+    //         // sleep(3)
+    //         print("CFRunLoopRun")
+    //         CFRunLoopRun()
+    //         print("wtf")
+    //     }
+    //     thread.name = "suka"
+    //     thread.start()
+    //
+    //     // sleep(3)
+    //
+    //     check(thread.isExecuting)
+    //
+    //     print("task started")
+    //     print("Thread.schedule")
+    //     thread.runInLoopAsync {
+    //         print("--- 1 \(Thread.current.name ?? "")")
+    //     }
+    //     thread.runInLoopAsync {
+    //         print("--- 2 \(Thread.current.name ?? "")")
+    //     }
+    // }
 
 
     // print("isExecuting: \(thread.isExecuting)")
@@ -118,25 +137,55 @@ import Foundation
 }
 
 extension Thread {
-    public func runInLoopAsync(_ body: @Sendable @escaping () -> ()) {
-        let action = Action(body)
+    @discardableResult
+    func runInLoopAsync(
+        job: RunLoopJob = RunLoopJob(),
+        disableImplicitCancellation: Bool = false,
+        _ body: @Sendable @escaping (RunLoopJob) -> ()
+    ) -> RunLoopJob {
+        let action = RunLoopAction(job: job, disableImplicitCancellation: disableImplicitCancellation, body)
         // Alternative: CFRunLoopPerformBlock + CFRunLoopWakeUp
         action.perform(#selector(action.action), on: self, with: nil, waitUntilDone: false)
+        return job
     }
 
-    public func runInLoop<T>(isolation: isolated (any Actor)? = #isolation, _ body: @Sendable @escaping () -> T) async -> T {
-        await withCheckedContinuation { (cont: Continuation<T>) in
-            self.runInLoopAsync {
-                cont.resume(returning: body())
+    func runInLoop<T>(_ body: @Sendable @escaping (RunLoopJob) -> T?) async -> T? {
+        let job = RunLoopJob()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { cont in
+                // It's unsafe to implicitly cancel because cont.resume should be invoked exactly once
+                self.runInLoopAsync(job: job, disableImplicitCancellation: true) { job in
+                    cont.resume(returning: job.isCancelled ? nil : body(job))
+                }
             }
+        } onCancel: {
+            job.cancel()
         }
     }
 }
 
-final class Action: NSObject {
-    private let _action: () -> ()
-    init(_ action: @escaping () -> ()) { _action = action }
-    @objc func action() { _action() }
+final class RunLoopAction: NSObject {
+    private let _action: (RunLoopJob) -> ()
+    let job: RunLoopJob
+    private let disableImplicitCancellation: Bool
+    init(job: RunLoopJob, disableImplicitCancellation: Bool, _ action: @escaping @Sendable (RunLoopJob) -> ()) {
+        self.job = job
+        self.disableImplicitCancellation = disableImplicitCancellation
+        _action = action
+    }
+    @objc func action() {
+        if disableImplicitCancellation || !job.isCancelled {
+            _action(job)
+        }
+    }
+}
+
+final class RunLoopJob: Sendable, AeroAny {
+    private let cancellationLatch = OneTimeLatch()
+    var isCancelled: Bool { cancellationLatch.isTriggered }
+    func cancel() { cancellationLatch.trigger() }
+
+    static let cancelled: RunLoopJob = RunLoopJob().also { $0.cancel() }
 }
 
 // final class SerialRunLoopDedicatedThreadExecutor: SerialExecutor {

@@ -5,16 +5,16 @@ func movedObs(_ obs: AXObserver, ax: AXUIElement, notif: CFString, data: UnsafeM
     check(Thread.current.isMainThread)
     let windowId = data?.window?.windowId
     let notif = notif as String
-    MainActor.assumeIsolated {
+    Task { @MainActor in
         if let windowId, let window = Window.get(byId: windowId), TrayMenuModel.shared.isEnabled {
-            moveWithMouseIfTheCase(window)
+            try await moveWithMouseIfTheCase(window)
         }
-        refreshAndLayout(.ax(notif), screenIsDefinitelyUnlocked: false)
+        try await refreshAndLayout(.ax(notif), screenIsDefinitelyUnlocked: false)
     }
 }
 
 @MainActor
-private func moveWithMouseIfTheCase(_ window: Window) { // todo cover with tests
+private func moveWithMouseIfTheCase(_ window: Window) async throws(CancellationError) { // todo cover with tests
     if window.isHiddenInCorner || // Don't allow to move windows of hidden workspaces
         !isLeftMouseButtonDown ||
         currentlyManipulatedWithMouseWindowId != nil && window.windowId != currentlyManipulatedWithMouseWindowId ||
@@ -25,7 +25,7 @@ private func moveWithMouseIfTheCase(_ window: Window) { // todo cover with tests
     resetClosedWindowsCache()
     switch window.parent.cases {
         case .workspace:
-            moveFloatingWindow(window)
+            try await moveFloatingWindow(window)
         case .tilingContainer:
             moveTilingWindow(window)
         case .macosMinimizedWindowsContainer, .macosFullscreenWindowsContainer,
@@ -35,8 +35,8 @@ private func moveWithMouseIfTheCase(_ window: Window) { // todo cover with tests
 }
 
 @MainActor
-private func moveFloatingWindow(_ window: Window) {
-    guard let targetWorkspace = window.getCenter()?.monitorApproximation.activeWorkspace else { return }
+private func moveFloatingWindow(_ window: Window) async throws(CancellationError) {
+    guard let targetWorkspace = try await window.getCenter()?.monitorApproximation.activeWorkspace else { return }
     if targetWorkspace != window.parent {
         window.bindAsFloatingWindow(to: targetWorkspace)
     }

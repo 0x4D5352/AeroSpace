@@ -5,8 +5,7 @@ import Common
 /// The function is called as a feedback response on every user input.
 /// The function is idempotent.
 @MainActor
-func refreshSession<T>(_ event: RefreshSessionEvent, screenIsDefinitelyUnlocked: Bool, startup: Bool = false, body: () -> T) -> T {
-    check(Thread.current.isMainThread)
+func refreshSession<T>(_ event: RefreshSessionEvent, screenIsDefinitelyUnlocked: Bool, startup: Bool = false, body: () -> T) async throws(CancellationError) -> T {
     // refreshSessionEventForDebug = event
     // defer { refreshSessionEventForDebug = nil }
     if screenIsDefinitelyUnlocked { resetClosedWindowsCache() }
@@ -32,19 +31,19 @@ func refreshSession<T>(_ event: RefreshSessionEvent, screenIsDefinitelyUnlocked:
 
     if TrayMenuModel.shared.isEnabled {
         if focusBefore != focusAfter {
-            focusAfter?.nativeFocus() // syncFocusToMacOs
+            focusAfter?.nativeFocusAsync() // syncFocusToMacOs
         }
 
         updateTrayText()
         normalizeLayoutReason(startup: startup)
-        layoutWorkspaces()
+        try await layoutWorkspaces()
     }
     return result
 }
 
 @MainActor
-func refreshAndLayout(_ event: RefreshSessionEvent, screenIsDefinitelyUnlocked: Bool, startup: Bool = false) {
-    refreshSession(event, screenIsDefinitelyUnlocked: screenIsDefinitelyUnlocked, startup: startup, body: {})
+func refreshAndLayout(_ event: RefreshSessionEvent, screenIsDefinitelyUnlocked: Bool, startup: Bool = false) async throws(CancellationError) {
+    try await refreshSession(event, screenIsDefinitelyUnlocked: screenIsDefinitelyUnlocked, startup: startup, body: {})
 }
 
 @MainActor
@@ -90,8 +89,8 @@ func gcWindows() {
 func refreshObs(_ obs: AXObserver, ax: AXUIElement, notif: CFString, data: UnsafeMutableRawPointer?) {
     check(Thread.isMainThread)
     let notif = notif as String
-    MainActor.assumeIsolated {
-        refreshAndLayout(.ax(notif), screenIsDefinitelyUnlocked: false)
+    Task {
+        try await refreshAndLayout(.ax(notif), screenIsDefinitelyUnlocked: false)
     }
 }
 
@@ -100,7 +99,7 @@ enum OptimalHideCorner {
 }
 
 @MainActor
-private func layoutWorkspaces() {
+private func layoutWorkspaces() async throws(CancellationError) {
     let monitors = monitors
     var monitorToOptimalHideCorner: [CGPoint: OptimalHideCorner] = [:]
     for monitor in monitors {
@@ -128,11 +127,13 @@ private func layoutWorkspaces() {
     for monitor in monitors {
         let workspace = monitor.activeWorkspace
         workspace.allLeafWindowsRecursive.forEach { ($0 as! MacWindow).unhideFromCorner() } // todo as!
-        workspace.layoutWorkspace()
+        try await workspace.layoutWorkspace()
     }
     for workspace in Workspace.all where !workspace.isVisible {
         let corner = monitorToOptimalHideCorner[workspace.workspaceMonitor.rect.topLeftCorner] ?? .bottomRightCorner
-        workspace.allLeafWindowsRecursive.forEach { ($0 as! MacWindow).hideInCorner(corner) } // todo as!
+        for window in workspace.allLeafWindowsRecursive {
+            try await (window as! MacWindow).hideInCorner(corner) // todo as!
+        }
     }
 }
 

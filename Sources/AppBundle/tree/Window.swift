@@ -32,15 +32,21 @@ class Window: TreeNode, Hashable {
         hasher.combine(windowId)
     }
 
-    func getTopLeftCorner() -> CGPoint? { error("Not implemented") }
+    func getTopLeftCorner() async throws(CancellationError) -> CGPoint? { error("Not implemented") }
     func getSize() -> CGSize? { error("Not implemented") }
     var title: String { error("Not implemented") }
     var isMacosFullscreen: Bool { false }
     var isMacosMinimized: Bool { false } // todo replace with enum MacOsWindowNativeState { normal, fullscreen, invisible }
     var isHiddenInCorner: Bool { error("Not implemented") }
     func setSize(_ size: CGSize) -> Bool { error("Not implemented") }
+    func nativeFocusAsync() { error("Not implemented") }
+    func getRect() async throws(CancellationError) -> Rect? { error("Not implemented") }
+    func getCenter() async throws(CancellationError) -> CGPoint? { try await getRect()?.center }
 
-    func setTopLeftCorner(_ point: CGPoint) -> Bool { error("Not implemented") }
+    func setTopLeftCornerAsync(_ point: CGPoint) { error("Not implemented") }
+    func setAxFrameDuringTermination(_ topLeft: CGPoint?, _ size: CGSize?) async throws(CancellationError) { error("Not implemented") }
+    func setFrameAsync(_ topLeft: CGPoint?, _ size: CGSize?) { error("Not implemented") }
+    func setSizeAsync(_ size: CGSize) { error("Not implemented") }
 }
 
 enum LayoutReason: Equatable {
@@ -58,16 +64,6 @@ extension Window {
     }
 
     var ownIndex: Int { ownIndexOrNil! }
-
-    func setFrame(_ topLeft: CGPoint?, _ size: CGSize?) -> Bool {
-        // Set size and then the position. The order is important https://github.com/nikitabobko/AeroSpace/issues/143
-        //                                                        https://github.com/nikitabobko/AeroSpace/issues/335
-        var result: Bool = true
-        if let size { result = setSize(size) && result }
-        if let topLeft { result = setTopLeftCorner(topLeft) && result }
-        if let size { result = setSize(size) && result }
-        return result
-    }
 
     func asMacWindow() -> MacWindow { self as! MacWindow }
 }

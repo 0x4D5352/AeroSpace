@@ -76,7 +76,7 @@ final class MacApp: AbstractApp {
         getFocusedAxWindow()?.lets { MacWindow.get(app: self, axWindow: $0, startup: startup) }
     }
 
-    func getFocusedAxWindow() -> AXUIElement? {
+    private func getFocusedAxWindow() -> AXUIElement? {
         axApp.get(Ax.focusedWindowAttr)
     }
 

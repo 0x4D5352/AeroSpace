@@ -1,28 +1,28 @@
 import AppKit
 
 extension Workspace {
-    func layoutWorkspace() {
+    func layoutWorkspace() async throws(CancellationError) {
         if isEffectivelyEmpty { return }
         let rect = workspaceMonitor.visibleRectPaddedByOuterGaps
         // If monitors are aligned vertically and the monitor below has smaller width, then macOS may not allow the
         // window on the upper monitor to take full width. rect.height - 1 resolves this problem
         // But I also faced this problem in mointors horizontal configuration. ¯\_(ツ)_/¯
-        layoutRecursive(rect.topLeftCorner, width: rect.width, height: rect.height - 1, virtual: rect, LayoutContext(self))
+        try await layoutRecursive(rect.topLeftCorner, width: rect.width, height: rect.height - 1, virtual: rect, LayoutContext(self))
     }
 }
 
 private extension TreeNode {
-    func layoutRecursive(_ point: CGPoint, width: CGFloat, height: CGFloat, virtual: Rect, _ context: LayoutContext) {
+    func layoutRecursive(_ point: CGPoint, width: CGFloat, height: CGFloat, virtual: Rect, _ context: LayoutContext) async throws(CancellationError) {
         let physicalRect = Rect(topLeftX: point.x, topLeftY: point.y, width: width, height: height)
         switch nodeCases {
             case .workspace(let workspace):
                 lastAppliedLayoutPhysicalRect = physicalRect
                 lastAppliedLayoutVirtualRect = virtual
-                workspace.rootTilingContainer.layoutRecursive(point, width: width, height: height, virtual: virtual, context)
+                try await workspace.rootTilingContainer.layoutRecursive(point, width: width, height: height, virtual: virtual, context)
                 for window in workspace.children.filterIsInstance(of: Window.self) {
                     window.lastAppliedLayoutPhysicalRect = nil
                     window.lastAppliedLayoutVirtualRect = nil
-                    window.layoutFloatingWindow(context)
+                    try await window.layoutFloatingWindow(context)
                 }
             case .window(let window):
                 if window.windowId != currentlyManipulatedWithMouseWindowId {
@@ -33,7 +33,7 @@ private extension TreeNode {
                     } else {
                         lastAppliedLayoutPhysicalRect = physicalRect
                         window.isFullscreen = false
-                        _ = window.setFrame(point, CGSize(width: width, height: height))
+                        window.setFrameAsync(point, CGSize(width: width, height: height))
                     }
                 }
             case .tilingContainer(let container):
@@ -41,9 +41,9 @@ private extension TreeNode {
                 lastAppliedLayoutVirtualRect = virtual
                 switch container.layout {
                     case .tiles:
-                        container.layoutTiles(point, width: width, height: height, virtual: virtual, context)
+                        try await container.layoutTiles(point, width: width, height: height, virtual: virtual, context)
                     case .accordion:
-                        container.layoutAccordion(point, width: width, height: height, virtual: virtual, context)
+                        try await container.layoutAccordion(point, width: width, height: height, virtual: virtual, context)
                 }
             case .macosMinimizedWindowsContainer, .macosFullscreenWindowsContainer,
                  .macosPopupWindowsContainer, .macosHiddenAppsWindowsContainer:
@@ -64,15 +64,15 @@ private struct LayoutContext {
 }
 
 private extension Window {
-    func layoutFloatingWindow(_ context: LayoutContext) {
+    func layoutFloatingWindow(_ context: LayoutContext) async throws(CancellationError) {
         let workspace = context.workspace
         let currentMonitor = getCenter()?.monitorApproximation
-        if let currentMonitor, let windowTopLeftCorner = getTopLeftCorner(), workspace != currentMonitor.activeWorkspace {
+        if let currentMonitor, let windowTopLeftCorner = try await getTopLeftCorner(), workspace != currentMonitor.activeWorkspace {
             let xProportion = (windowTopLeftCorner.x - currentMonitor.visibleRect.topLeftX) / currentMonitor.visibleRect.width
             let yProportion = (windowTopLeftCorner.y - currentMonitor.visibleRect.topLeftY) / currentMonitor.visibleRect.height
 
             let moveTo = workspace.workspaceMonitor
-            _ = setTopLeftCorner(CGPoint(
+            setTopLeftCornerAsync(CGPoint(
                 x: moveTo.visibleRect.topLeftX + xProportion * moveTo.visibleRect.width,
                 y: moveTo.visibleRect.topLeftY + yProportion * moveTo.visibleRect.height
             ))
@@ -87,12 +87,12 @@ private extension Window {
         let monitorRect = noOuterGapsInFullscreen
             ? context.workspace.workspaceMonitor.visibleRect
             : context.workspace.workspaceMonitor.visibleRectPaddedByOuterGaps
-        _ = setFrame(monitorRect.topLeftCorner, CGSize(width: monitorRect.width, height: monitorRect.height))
+        setFrameAsync(monitorRect.topLeftCorner, CGSize(width: monitorRect.width, height: monitorRect.height))
     }
 }
 
 private extension TilingContainer {
-    func layoutTiles(_ point: CGPoint, width: CGFloat, height: CGFloat, virtual: Rect, _ context: LayoutContext) {
+    func layoutTiles(_ point: CGPoint, width: CGFloat, height: CGFloat, virtual: Rect, _ context: LayoutContext) async throws(CancellationError) {
         var point = point
         var virtualPoint = virtual.topLeftCorner
 
@@ -109,7 +109,7 @@ private extension TilingContainer {
             // 3. Multiple children. Layout child in the middle
             // 4. Single child   let rawGap = gaps.inner.get(orientation).toDouble()
             let gap = rawGap - (i == 0 ? rawGap / 2 : 0) - (i == lastIndex ? rawGap / 2 : 0)
-            child.layoutRecursive(
+            try await child.layoutRecursive(
                 i == 0 ? point : point.addingOffset(orientation, rawGap / 2),
                 width: orientation == .h ? child.hWeight - gap : width,
                 height: orientation == .v ? child.vWeight - gap : height,
@@ -126,7 +126,7 @@ private extension TilingContainer {
         }
     }
 
-    func layoutAccordion(_ point: CGPoint, width: CGFloat, height: CGFloat, virtual: Rect, _ context: LayoutContext) {
+    func layoutAccordion(_ point: CGPoint, width: CGFloat, height: CGFloat, virtual: Rect, _ context: LayoutContext) async throws(CancellationError) {
         guard let mruIndex: Int = mostRecentChild?.ownIndexOrNil else { return }
         for (index, child) in children.enumerated() {
             let padding = CGFloat(config.accordionPadding)
@@ -140,7 +140,7 @@ private extension TilingContainer {
             }
             switch orientation {
                 case .h:
-                    child.layoutRecursive(
+                    try await child.layoutRecursive(
                         point + CGPoint(x: lPadding, y: 0),
                         width: width - rPadding - lPadding,
                         height: height,
@@ -148,7 +148,7 @@ private extension TilingContainer {
                         context
                     )
                 case .v:
-                    child.layoutRecursive(
+                    try await child.layoutRecursive(
                         point + CGPoint(x: 0, y: lPadding),
                         width: width,
                         height: height - lPadding - rPadding,

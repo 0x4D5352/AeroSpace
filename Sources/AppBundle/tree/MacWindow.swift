@@ -4,13 +4,15 @@ import Common
 final class MacWindow: Window {
     let axWindow: AXUIElement
     let macApp: MacApp
+    let appActor: AppActor
     // todo take into account monitor proportions
     private var prevUnhiddenEmulationPositionRelativeToWorkspaceAssignedRect: CGPoint?
     private var axObservers: [AxObserverWrapper] = [] // keep observers in memory
 
-    private init(_ id: CGWindowID, _ app: MacApp, _ axWindow: AXUIElement, parent: NonLeafTreeNodeObject, adaptiveWeight: CGFloat, index: Int) {
+    private init(_ id: CGWindowID, _ app: MacApp, _ actor: AppActor, _ axWindow: AXUIElement, parent: NonLeafTreeNodeObject, adaptiveWeight: CGFloat, index: Int) {
         self.axWindow = axWindow
         self.macApp = app
+        self.appActor = actor
         super.init(id: id, app, lastFloatingSize: axWindow.get(Ax.sizeAttr), parent: parent, adaptiveWeight: adaptiveWeight, index: index)
     }
 
@@ -90,7 +92,7 @@ final class MacWindow: Window {
                     if focus.windowOrNil?.app.pid != app.pid {
                         // Force focus to fix macOS annoyance with focused apps without windows.
                         //   https://github.com/nikitabobko/AeroSpace/issues/65
-                        deadWindowFocus.windowOrNil?.nativeFocus()
+                        deadWindowFocus.windowOrNil?.nativeFocusAsync()
                     }
                 case .macosPopupWindowsContainer, .macosMinimizedWindowsContainer:
                     break // Don't switch back on popup destruction
@@ -108,12 +110,8 @@ final class MacWindow: Window {
     override var isMacosFullscreen: Bool { axWindow.get(Ax.isFullscreenAttr) == true }
     override var isMacosMinimized: Bool { axWindow.get(Ax.minimizedAttr) == true }
 
-    @discardableResult
-    override func nativeFocus() -> Bool {
-        // Raise firstly to make sure that by the time we activate the app, the window would be already on top
-        axWindow.set(Ax.isMainAttr, true) &&
-            axWindow.raise() &&
-            macApp.nsApp.activate(options: .activateIgnoringOtherApps)
+    override func nativeFocusAsync() {
+        appActor.nativeFocusAsync(windowId)
     }
 
     override func close() -> Bool {
@@ -123,12 +121,12 @@ final class MacWindow: Window {
         return true
     }
 
-    func hideInCorner(_ corner: OptimalHideCorner) {
+    func hideInCorner(_ corner: OptimalHideCorner) async throws(CancellationError) {
         guard let nodeMonitor else { return }
         // Don't accidentally override prevUnhiddenEmulationPosition in case of subsequent
         // `hideEmulation` calls
         if !isHiddenInCorner {
-            guard let topLeftCorner = getTopLeftCorner() else { return }
+            guard let topLeftCorner = try await getTopLeftCorner() else { return }
             guard let nodeWorkspace else { return } // hiding only makes sense for workspace windows
             prevUnhiddenEmulationPositionRelativeToWorkspaceAssignedRect =
                 topLeftCorner - nodeWorkspace.workspaceMonitor.rect.topLeftCorner
@@ -147,7 +145,7 @@ final class MacWindow: Window {
                 let onePixelOffset = macApp.isZoom ? .zero : CGPoint(x: 1, y: 1)
                 p = nodeMonitor.visibleRect.bottomRightCorner - onePixelOffset
         }
-        _ = setTopLeftCorner(p)
+        setTopLeftCornerAsync(p)
     }
 
     func unhideFromCorner() {
@@ -158,7 +156,7 @@ final class MacWindow: Window {
             // Just a small optimization to avoid unnecessary AX calls for non floating windows
             // Tiling windows should be unhidden with layoutRecursive anyway
             case .floatingWindow:
-                _ = setTopLeftCorner(nodeWorkspace.workspaceMonitor.rect.topLeftCorner + prevUnhiddenEmulationPositionRelativeToWorkspaceAssignedRect)
+                setTopLeftCornerAsync(nodeWorkspace.workspaceMonitor.rect.topLeftCorner + prevUnhiddenEmulationPositionRelativeToWorkspaceAssignedRect)
             case .macosNativeFullscreenWindow, .macosNativeHiddenAppWindow, .macosNativeMinimizedWindow,
                  .macosPopupWindow, .tiling, .rootTilingContainer, .shimContainerRelation: break
         }
@@ -180,20 +178,28 @@ final class MacWindow: Window {
         axWindow.get(Ax.sizeAttr)
     }
 
-    override func setTopLeftCorner(_ point: CGPoint) -> Bool {
-        disableAnimations {
-            axWindow.set(Ax.topLeftCornerAttr, point)
-        }
+    override func setTopLeftCornerAsync(_ point: CGPoint) {
+        appActor.setTopLeftCornerAsync(windowId, point)
     }
 
-    override func getTopLeftCorner() -> CGPoint? {
-        axWindow.get(Ax.topLeftCornerAttr)
+    override func setFrameAsync(_ topLeft: CGPoint?, _ size: CGSize?) {
+        appActor.setFrameAsync(windowId, topLeft, size)
     }
 
-    override func getRect() -> Rect? {
-        guard let topLeftCorner = getTopLeftCorner() else { return nil }
-        guard let size = getSize() else { return nil }
-        return Rect(topLeftX: topLeftCorner.x, topLeftY: topLeftCorner.y, width: size.width, height: size.height)
+    override func setAxFrameDuringTermination(_ topLeft: CGPoint?, _ size: CGSize?) async throws(CancellationError) {
+        try await appActor.setAxFrameDuringTermination(windowId, topLeft, size)
+    }
+
+    override func setSizeAsync(_ size: CGSize) {
+        appActor.setSizeAsync(windowId, size)
+    }
+
+    override func getTopLeftCorner() async throws(CancellationError) -> CGPoint? {
+        try await appActor.getTopLeftCorner(windowId)
+    }
+
+    override func getRect() async throws(CancellationError) -> Rect? {
+        try await appActor.getRect(windowId)
     }
 
     // Some undocumented magic
@@ -223,7 +229,7 @@ final class MacWindow: Window {
 /// Why do we need to filter out non-windows?
 /// - "floating by default" workflow
 /// - It's annoying that the focus command treats these popups as floating windows
-func isWindowImpl(axWindow: AXUIElement, axApp: AXUIElement, appBundleId: String?) -> Bool {
+func isWindowImpl(axWindow: AXUIElement, axApp: AXUIElement, appBundleId: String?) -> Bool { // todo cover with tests
     // Just don't do anything with "Ghostty Quick Terminal" windows.
     // Its position and size are managed by the Ghostty itself
     // https://github.com/nikitabobko/AeroSpace/issues/103

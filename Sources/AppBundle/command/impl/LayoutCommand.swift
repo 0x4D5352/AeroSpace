@@ -45,8 +45,8 @@ struct LayoutCommand: Command {
             case .floating:
                 let workspace = target.workspace
                 window.bindAsFloatingWindow(to: workspace)
-                guard let topLeftCorner = window.getTopLeftCorner() else { return false }
-                return window.setFrame(topLeftCorner, window.lastFloatingSize)
+                if let size = window.lastFloatingSize { window.setSizeAsync(size) }
+                return true
         }
     }
 }
