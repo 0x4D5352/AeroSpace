@@ -1,12 +1,6 @@
 import AppKit
 import Common
 
-func checkCancellation() throws(CancellationError) {
-    if Task.isCancelled {
-        throw CancellationError()
-    }
-}
-
 // Potential alternative implementation
 // https://github.com/swiftlang/swift-evolution/blob/main/proposals/0392-custom-actor-executors.md
 // (only available since macOS 14)
@@ -15,6 +9,7 @@ final class AppActor {
     /*conform*/ let id: String? // todo rename to bundleId
     let nsApp: NSRunningApplication
     private let axApp: UnsafeSendable<AXUIElement>
+    let isZoom: Bool
     private let axObservers: UnsafeSendable<[AxObserverWrapper]> // keep observers in memory
     private let windows: MutableUnsafeSendable<[UInt32: AXUIElement]> = .init([:])
     private var thread: Thread?
@@ -35,6 +30,7 @@ final class AppActor {
         self.axApp = .init(axApp)
         self.axObservers = .init(axObservers)
         self.thread = thread
+        self.isZoom = nsApp.bundleIdentifier == "us.zoom.xos"
     }
 
     @MainActor
@@ -86,6 +82,14 @@ final class AppActor {
         } == true
     }
 
+    // todo merge together with detectNewWindows
+    func getFocusedWindow(startup: Bool) async throws(CancellationError) -> Window? {
+        try await getThreadOrThrow().runInLoop { job in
+            axApp.unsafe.get(Ax.focusedWindowAttr)
+        }
+        // getFocusedAxWindow()?.lets { MacWindow.get(app: self, axWindow: $0, startup: startup) }
+    }
+
     func nativeFocusAsync(_ windowId: UInt32) {
         withWindowAsync(windowId) { [nsApp] window, job in
             // Raise firstly to make sure that by the time we activate the app, the window would be already on top
@@ -129,6 +133,12 @@ final class AppActor {
             disableAnimations(app: axApp.unsafe) {
                 _ = window.set(Ax.topLeftCornerAttr, point)
             }
+        }
+    }
+
+    func getWindowsCount() async throws(CancellationError) -> Int? {
+        try await getThreadOrThrow().runInLoop { [axApp] job in
+            axApp.unsafe.get(Ax.windowsAttr)?.count
         }
     }
 
@@ -220,9 +230,13 @@ final class AppActor {
         }
     }
 
+    private func getThreadOrThrow() throws(CancellationError) -> Thread { // todo rename to "OrThrowCancellation"
+        if let thread { return thread }
+        throw CancellationError()
+    }
+
     private func withWindow<T>(_ windowId: UInt32, _ body: @Sendable @escaping (AXUIElement, RunLoopJob) -> T?) async throws(CancellationError) -> T? {
-        try checkCancellation()
-        return await thread?.runInLoop { [windows] job in
+        try await getThreadOrThrow().runInLoop { [windows] job in
             guard let window = windows.unsafe[windowId] else { return nil }
             return body(window, job)
         }

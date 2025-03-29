@@ -5,7 +5,12 @@ import Common
 /// The function is called as a feedback response on every user input.
 /// The function is idempotent.
 @MainActor
-func refreshSession<T>(_ event: RefreshSessionEvent, screenIsDefinitelyUnlocked: Bool, startup: Bool = false, body: () -> T) async throws(CancellationError) -> T {
+func refreshSession<T>(
+    _ event: RefreshSessionEvent,
+    screenIsDefinitelyUnlocked: Bool,
+    startup: Bool = false,
+    body: @MainActor () async throws(CancellationError) -> T
+) async throws(CancellationError) -> T {
     // refreshSessionEventForDebug = event
     // defer { refreshSessionEventForDebug = nil }
     if screenIsDefinitelyUnlocked { resetClosedWindowsCache() }
@@ -19,9 +24,9 @@ func refreshSession<T>(_ event: RefreshSessionEvent, screenIsDefinitelyUnlocked:
     updateFocusCache(nativeFocused)
     let focusBefore = focus.windowOrNil
 
-    refreshModel()
-    let result = body()
-    refreshModel()
+    try await refreshModel()
+    let result = try await body()
+    try await refreshModel()
 
     let focusAfter = focus.windowOrNil
 
@@ -47,9 +52,9 @@ func refreshAndLayout(_ event: RefreshSessionEvent, screenIsDefinitelyUnlocked: 
 }
 
 @MainActor
-func refreshModel() {
+func refreshModel() async throws(CancellationError) {
     gc()
-    checkOnFocusChangedCallbacks()
+    try await checkOnFocusChangedCallbacks()
     normalizeContainers()
 }
 

@@ -28,8 +28,9 @@ public func menuBar(viewModel: TrayMenuModel) -> some Scene { // todo should it 
         }
         Button(viewModel.isEnabled ? "Disable" : "Enable") {
             Task {
-                try await refreshSession(.menuBarButton, screenIsDefinitelyUnlocked: true) {
-                    _ = EnableCommand(args: EnableCmdArgs(rawArgs: [], targetState: .toggle)).run(.defaultEnv, .emptyStdin)
+                try await refreshSession(.menuBarButton, screenIsDefinitelyUnlocked: true) { () throws(CancellationError) in
+                    _ = try await EnableCommand(args: EnableCmdArgs(rawArgs: [], targetState: .toggle))
+                        .run(.defaultEnv, .emptyStdin)
                 }
             }
         }.keyboardShortcut("E", modifiers: .command)

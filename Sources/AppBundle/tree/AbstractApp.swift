@@ -12,8 +12,6 @@ protocol AbstractApp: AnyObject, Hashable, AeroAny {
 }
 
 extension AbstractApp {
-    func asMacApp() -> MacApp { self as! MacApp }
-
     func isFirefox() -> Bool {
         ["org.mozilla.firefox", "org.mozilla.firefoxdeveloperedition", "org.mozilla.nightly"].contains(id ?? "")
     }
@@ -34,5 +32,6 @@ extension AbstractApp {
 }
 
 extension Window {
-    var macAppUnsafe: MacApp { app.asMacApp() }
+    var macAppUnsafe: MacApp { app as! MacApp }
+    var _macAppUnsafe: AppActor { app as! AppActor } // todo rename to macAppUnsafe
 }

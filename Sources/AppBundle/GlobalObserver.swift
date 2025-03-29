@@ -22,7 +22,7 @@ class GlobalObserver {
             try await refreshSession(.globalObserver(notifName), screenIsDefinitelyUnlocked: false) {
                 if TrayMenuModel.shared.isEnabled && config.automaticallyUnhideMacosHiddenApps {
                     if let w = prevFocus?.windowOrNil,
-                       w.macAppUnsafe.nsApp.isHidden,
+                       w._macAppUnsafe.nsApp.isHidden,
                        // "Hide others" (cmd-alt-h) -> don't force focus
                        // "Hide app" (cmd-h) -> force focus
                        MacApp.allAppsMap.values.filter({ $0.nsApp.isHidden }).count == 1

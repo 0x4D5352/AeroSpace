@@ -26,10 +26,12 @@ import Foundation
     Task {
         try await refreshAndLayout(.startup1, screenIsDefinitelyUnlocked: false, startup: true)
         try await refreshSession(.startup2, screenIsDefinitelyUnlocked: false) {
-            if serverArgs.startedAtLogin {
-                _ = config.afterLoginCommand.runCmdSeq(.defaultEnv, .emptyStdin)
+            try await allowOnlyCancellationError { // Swift, are you drunk?
+                if serverArgs.startedAtLogin {
+                    _ = try await config.afterLoginCommand.runCmdSeq(.defaultEnv, .emptyStdin)
+                }
+                _ = try await config.afterStartupCommand.runCmdSeq(.defaultEnv, .emptyStdin)
             }
-            _ = config.afterStartupCommand.runCmdSeq(.defaultEnv, .emptyStdin)
         }
     }
 
@@ -149,17 +151,24 @@ extension Thread {
         return job
     }
 
-    func runInLoop<T>(_ body: @Sendable @escaping (RunLoopJob) -> T?) async -> T? {
+    func runInLoop<T>(_ body: @Sendable @escaping (RunLoopJob) -> T) async throws(CancellationError) -> T {
+        try checkCancellation()
         let job = RunLoopJob()
-        return await withTaskCancellationHandler {
-            await withCheckedContinuation { cont in
-                // It's unsafe to implicitly cancel because cont.resume should be invoked exactly once
-                self.runInLoopAsync(job: job, disableImplicitCancellation: true) { job in
-                    cont.resume(returning: job.isCancelled ? nil : body(job))
+        return try await allowOnlyCancellationError {
+            try await withTaskCancellationHandler {
+                try await withCheckedThrowingContinuation { cont in
+                    // It's unsafe to implicitly cancel because cont.resume should be invoked exactly once
+                    self.runInLoopAsync(job: job, disableImplicitCancellation: true) { job in
+                        if job.isCancelled {
+                            cont.resume(throwing: CancellationError())
+                        } else {
+                            cont.resume(returning: body(job))
+                        }
+                    }
                 }
+            } onCancel: {
+                job.cancel()
             }
-        } onCancel: {
-            job.cancel()
         }
     }
 }

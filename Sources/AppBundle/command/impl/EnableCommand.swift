@@ -4,7 +4,7 @@ import Common
 struct EnableCommand: Command {
     let args: EnableCmdArgs
 
-    func run(_ env: CmdEnv, _ io: CmdIo) -> Bool {
+    func run(_ env: CmdEnv, _ io: CmdIo) async throws(CancellationError) -> Bool {
         let prevState = TrayMenuModel.shared.isEnabled
         let newState: Bool = switch args.targetState.val {
             case .on: true
@@ -29,9 +29,7 @@ struct EnableCommand: Command {
             activateMode(nil)
             for workspace in Workspace.all {
                 workspace.allLeafWindowsRecursive.forEach { ($0 as! MacWindow).unhideFromCorner() } // todo as!
-                Task { // todo hack?
-                    try await workspace.layoutWorkspace() // Unhide tiling windows from corner
-                }
+                try await workspace.layoutWorkspace() // Unhide tiling windows from corner // todo try await hack?
             }
         }
         return true

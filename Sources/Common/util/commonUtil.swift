@@ -173,3 +173,22 @@ public func cliErrorT<T>(_ message: String = "") -> T {
     printStderr(message)
     exit(1)
 }
+
+@inlinable
+public func allowOnlyCancellationError<T>(isolation: isolated (any Actor)? = #isolation, _ block: () async throws -> sending T) async throws(CancellationError) -> sending T {
+    do {
+        return try await block()
+    } catch let foo {
+        if let bar = foo as? CancellationError {
+            throw bar
+        } else {
+            error("throws must only be used for CancellationError")
+        }
+    }
+}
+
+public func checkCancellation() throws(CancellationError) {
+    if Task.isCancelled {
+        throw CancellationError()
+    }
+}

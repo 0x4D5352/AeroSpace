@@ -4,33 +4,30 @@ import Common
 struct MoveMouseCommand: Command {
     let args: MoveMouseCmdArgs
 
-    func run(_ env: CmdEnv, _ io: CmdIo) -> Bool {
-        Task { // todo hack
-            let mouse = mouseLocation
-            guard let target = args.resolveTargetOrReportError(env, io) else { return false }
-            switch args.mouseTarget.val {
-                case .windowLazyCenter:
-                    guard let rect = try await windowSubjectRectOrReportError(target, io) else { return false }
-                    if rect.contains(mouse) {
-                        io.err("The mouse already belongs to the window. Tip: use --fail-if-noop to exit with non-zero code")
-                        return !args.failIfNoop
-                    }
-                    return moveMouse(io, rect.center)
-                case .windowForceCenter:
-                    guard let rect = try await windowSubjectRectOrReportError(target, io) else { return false }
-                    return moveMouse(io, rect.center)
-                case .monitorLazyCenter:
-                    let rect = target.workspace.workspaceMonitor.rect
-                    if rect.contains(mouse) {
-                        io.err("The mouse already belongs to the monitor. Tip: use --fail-if-noop to exit with non-zero code")
-                        return !args.failIfNoop
-                    }
-                    return moveMouse(io, rect.center)
-                case .monitorForceCenter:
-                    return moveMouse(io, target.workspace.workspaceMonitor.rect.center)
-            }
+    func run(_ env: CmdEnv, _ io: CmdIo) async throws(CancellationError) -> Bool {
+        let mouse = mouseLocation
+        guard let target = args.resolveTargetOrReportError(env, io) else { return false }
+        switch args.mouseTarget.val {
+            case .windowLazyCenter:
+                guard let rect = try await windowSubjectRectOrReportError(target, io) else { return false }
+                if rect.contains(mouse) {
+                    io.err("The mouse already belongs to the window. Tip: use --fail-if-noop to exit with non-zero code")
+                    return !args.failIfNoop
+                }
+                return moveMouse(io, rect.center)
+            case .windowForceCenter:
+                guard let rect = try await windowSubjectRectOrReportError(target, io) else { return false }
+                return moveMouse(io, rect.center)
+            case .monitorLazyCenter:
+                let rect = target.workspace.workspaceMonitor.rect
+                if rect.contains(mouse) {
+                    io.err("The mouse already belongs to the monitor. Tip: use --fail-if-noop to exit with non-zero code")
+                    return !args.failIfNoop
+                }
+                return moveMouse(io, rect.center)
+            case .monitorForceCenter:
+                return moveMouse(io, target.workspace.workspaceMonitor.rect.center)
         }
-        return true
     }
 }
 

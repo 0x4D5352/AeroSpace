@@ -3,12 +3,13 @@ import Common
 
 final class MacWindow: Window {
     let axWindow: AXUIElement
-    let macApp: MacApp
+    /*conforms*/ let macApp: MacApp
     let appActor: AppActor
     // todo take into account monitor proportions
     private var prevUnhiddenEmulationPositionRelativeToWorkspaceAssignedRect: CGPoint?
     private var axObservers: [AxObserverWrapper] = [] // keep observers in memory
 
+    @MainActor
     private init(_ id: CGWindowID, _ app: MacApp, _ actor: AppActor, _ axWindow: AXUIElement, parent: NonLeafTreeNodeObject, adaptiveWeight: CGFloat, index: Int) {
         self.axWindow = axWindow
         self.macApp = app
@@ -16,10 +17,11 @@ final class MacWindow: Window {
         super.init(id: id, app, lastFloatingSize: axWindow.get(Ax.sizeAttr), parent: parent, adaptiveWeight: adaptiveWeight, index: index)
     }
 
-    static var allWindowsMap: [CGWindowID: MacWindow] = [:]
-    static var allWindows: [MacWindow] { Array(allWindowsMap.values) }
+    @MainActor static var allWindowsMap: [CGWindowID: MacWindow] = [:]
+    @MainActor static var allWindows: [MacWindow] { Array(allWindowsMap.values) }
 
-    static func get(app: MacApp, axWindow: AXUIElement, startup: Bool) -> MacWindow? {
+    @MainActor
+    static func get(app: MacApp, axWindow: AXUIElement, startup: Bool) async throws(CancellationError) -> MacWindow? {
         guard let id = axWindow.containingWindowId() else { return nil }
         if let existing = allWindowsMap[id] {
             return existing
@@ -34,7 +36,7 @@ final class MacWindow: Window {
                 startup ? (axWindow.center?.monitorApproximation ?? mainMonitor).activeWorkspace : focus.workspace,
                 app
             )
-            let window = MacWindow(id, app, axWindow, parent: data.parent, adaptiveWeight: data.adaptiveWeight, index: data.index)
+            let window = MacWindow(id, app, errorT("drop MacApp dependency first"), axWindow, parent: data.parent, adaptiveWeight: data.adaptiveWeight, index: data.index)
 
             if window.observe(refreshObs, kAXUIElementDestroyedNotification) &&
                 window.observe(refreshObs, kAXWindowDeminiaturizedNotification) &&
@@ -45,7 +47,7 @@ final class MacWindow: Window {
                 allWindowsMap[id] = window
                 debugWindowsIfRecording(window)
                 if !restoreClosedWindowsCacheIfNeeded(newlyDetectedWindow: window) {
-                    tryOnWindowDetected(window, startup: startup)
+                    try await tryOnWindowDetected(window, startup: startup)
                 }
                 return window
             } else {
@@ -69,6 +71,7 @@ final class MacWindow: Window {
 
     // skipClosedWindowsCache is an optimization when it's definitely not necessary to cache closed window.
     //                        If you are unsure, it's better to pass `false`
+    @MainActor
     func garbageCollect(skipClosedWindowsCache: Bool) {
         if MacWindow.allWindowsMap.removeValue(forKey: windowId) == nil {
             return
@@ -121,6 +124,7 @@ final class MacWindow: Window {
         return true
     }
 
+    @MainActor
     func hideInCorner(_ corner: OptimalHideCorner) async throws(CancellationError) {
         guard let nodeMonitor else { return }
         // Don't accidentally override prevUnhiddenEmulationPosition in case of subsequent
@@ -137,17 +141,18 @@ final class MacWindow: Window {
                 guard let s = getSize() else { fallthrough }
                 // Zoom will jump off if you do one pixel offset https://github.com/nikitabobko/AeroSpace/issues/527
                 // todo this ad hoc won't be necessary once I implement optimization suggested by Zalim
-                let onePixelOffset = macApp.isZoom ? .zero : CGPoint(x: 1, y: -1)
+                let onePixelOffset = appActor.isZoom ? .zero : CGPoint(x: 1, y: -1)
                 p = nodeMonitor.visibleRect.bottomLeftCorner + onePixelOffset + CGPoint(x: -s.width, y: 0)
             case .bottomRightCorner:
                 // Zoom will jump off if you do one pixel offset https://github.com/nikitabobko/AeroSpace/issues/527
                 // todo this ad hoc won't be necessary once I implement optimization suggested by Zalim
-                let onePixelOffset = macApp.isZoom ? .zero : CGPoint(x: 1, y: 1)
+                let onePixelOffset = appActor.isZoom ? .zero : CGPoint(x: 1, y: 1)
                 p = nodeMonitor.visibleRect.bottomRightCorner - onePixelOffset
         }
         setTopLeftCornerAsync(p)
     }
 
+    @MainActor
     func unhideFromCorner() {
         guard let prevUnhiddenEmulationPositionRelativeToWorkspaceAssignedRect else { return }
         guard let nodeWorkspace else { return } // hiding only makes sense for workspace windows
@@ -166,12 +171,6 @@ final class MacWindow: Window {
 
     override var isHiddenInCorner: Bool {
         prevUnhiddenEmulationPositionRelativeToWorkspaceAssignedRect != nil
-    }
-
-    override func setSize(_ size: CGSize) -> Bool {
-        disableAnimations {
-            axWindow.set(Ax.sizeAttr, size)
-        }
     }
 
     override func getSize() -> CGSize? {
@@ -200,22 +199,6 @@ final class MacWindow: Window {
 
     override func getRect() async throws(CancellationError) -> Rect? {
         try await appActor.getRect(windowId)
-    }
-
-    // Some undocumented magic
-    // References: https://github.com/koekeishiya/yabai/commit/3fe4c77b001e1a4f613c26f01ea68c0f09327f3a
-    //             https://github.com/rxhanson/Rectangle/pull/285
-    private func disableAnimations<T>(_ body: () -> T) -> T {
-        let app = (app as! MacApp).axApp
-        let wasEnabled = app.get(Ax.enhancedUserInterfaceAttr) == true
-        if wasEnabled {
-            app.set(Ax.enhancedUserInterfaceAttr, false)
-        }
-        let result = body()
-        if wasEnabled {
-            app.set(Ax.enhancedUserInterfaceAttr, true)
-        }
-        return result
     }
 }
 
@@ -331,7 +314,7 @@ extension Window {
 }
 
 // The function is private because it's "unsafe". It requires the window to be in unbound state
-@MainActor
+// @MainActor
 private func getBindingDataForNewWindow(_ axWindow: AXUIElement, _ workspace: Workspace, _ app: MacApp) -> BindingData {
     if !isWindow(axWindow, app) {
         return BindingData(parent: macosPopupWindowsContainer, adaptiveWeight: WEIGHT_AUTO, index: INDEX_BIND_LAST)
@@ -342,8 +325,7 @@ private func getBindingDataForNewWindow(_ axWindow: AXUIElement, _ workspace: Wo
     return getBindingDataForNewTilingWindow(workspace)
 }
 
-// The function is private because it's "unsafe". It requires the window to be in unbound state
-@MainActor
+// The function is private because it's unsafe. It requires the window to be in unbound state
 private func getBindingDataForNewTilingWindow(_ workspace: Workspace) -> BindingData {
     let mruWindow = workspace.mostRecentWindowRecursive
     if let mruWindow, let tilingParent = mruWindow.parent as? TilingContainer {
@@ -366,21 +348,20 @@ extension UnsafeMutableRawPointer {
 }
 
 @MainActor
-func tryOnWindowDetected(_ window: Window, startup: Bool) {
+func tryOnWindowDetected(_ window: Window, startup: Bool) async throws(CancellationError) {
     switch window.parent.cases {
         case .tilingContainer, .workspace, .macosMinimizedWindowsContainer,
              .macosFullscreenWindowsContainer, .macosHiddenAppsWindowsContainer:
-            onWindowDetected(window, startup: startup)
+            try await onWindowDetected(window, startup: startup)
         case .macosPopupWindowsContainer:
             break
     }
 }
 
 @MainActor
-private func onWindowDetected(_ window: Window, startup: Bool) {
-    check(Thread.current.isMainThread)
+private func onWindowDetected(_ window: Window, startup: Bool) async throws(CancellationError) {
     for callback in config.onWindowDetected where callback.matches(window, startup: startup) {
-        _ = callback.run.runCmdSeq(.defaultEnv.copy(\.windowId, window.windowId), .emptyStdin)
+        _ = try await callback.run.runCmdSeq(.defaultEnv.copy(\.windowId, window.windowId), .emptyStdin)
         if !callback.checkFurtherCallbacks {
             return
         }
