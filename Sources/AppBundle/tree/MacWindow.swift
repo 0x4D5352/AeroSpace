@@ -202,17 +202,17 @@ final class MacWindow: Window {
     }
 }
 
-
 @MainActor func isWindow(_ axWindow: AXUIElement, _ app: MacApp) -> Bool { // todo drop
     return isWindowImpl(axWindow: axWindow, axApp: app.axApp, appBundleId: app.id)
 }
 
+// todo create a database of problematic windows and cover the function with tests
 /// Alternative name: !isPopup
 ///
 /// Why do we need to filter out non-windows?
 /// - "floating by default" workflow
 /// - It's annoying that the focus command treats these popups as floating windows
-func isWindowImpl(axWindow: AXUIElement, axApp: AXUIElement, appBundleId: String?) -> Bool { // todo cover with tests
+func isWindowImpl(axWindow: AXUIElement, axApp: AXUIElement, appBundleId: String?) -> Bool { // todo rename to isWindowHeuristic
     // Just don't do anything with "Ghostty Quick Terminal" windows.
     // Its position and size are managed by the Ghostty itself
     // https://github.com/nikitabobko/AeroSpace/issues/103
@@ -246,8 +246,8 @@ func isWindowImpl(axWindow: AXUIElement, axApp: AXUIElement, appBundleId: String
         axWindow.get(Ax.subroleAttr) == kAXStandardWindowSubrole
 }
 
-// This function is referenced in the guide
-func isDialogHeuristic(_ axWindow: AXUIElement, _ app: MacApp) -> Bool {
+// 'isDialogHeuristic' function name is referenced in the guide
+func isDialogHeuristic(_ axWindow: AXUIElement, _ app: MacApp) -> Bool { // todo Drop and replace with isDialogHeuristicNew
     // Note: a lot of windows don't have title on startup. So please don't rely on the title
 
     // Don't tile:
@@ -262,7 +262,57 @@ func isDialogHeuristic(_ axWindow: AXUIElement, _ app: MacApp) -> Bool {
         return true
     }
     // Firefox: Picture in Picture window doesn't have minimize button.
-    // todo. bug: when firefox shows non-native fullscreen, minimize button is disabled for all other windows
+    // todo. bug: when firefox shows non-native fullscreen, minimize button is disabled for all other non-fullscreen windows
+    if app.isFirefox() && axWindow.get(Ax.minimizeButtonAttr)?.get(Ax.enabledAttr) != true {
+        return true
+    }
+    if app.id == "com.apple.PhotoBooth" { return true }
+    // Heuristic: float windows without fullscreen button (such windows are not designed to be big)
+    // - IntelliJ various dialogs (Rebase..., Edit commit message, Settings, Project structure)
+    // - Finder copy file dialog
+    // - System Settings
+    // - Apple logo -> About this Mac
+    // - Calculator
+    // - Battle.net login dialog
+    // Fullscreen button is presented but disabled:
+    // - Safari -> Pinterest -> Log in with Google
+    // - Kap screen recorder https://github.com/wulkano/Kap
+    // - flameshot? https://github.com/nikitabobko/AeroSpace/issues/112
+    // - Drata Agent https://github.com/nikitabobko/AeroSpace/issues/134
+    if !isFullscreenable(axWindow) &&
+        app.id != "org.gimp.gimp-2.10" && // Gimp doesn't show fullscreen button
+        app.id != "com.apple.ActivityMonitor" && // Activity Monitor doesn't show fullscreen button
+
+        // Terminal apps and Emacs have an option to hide their title bars
+        app.id != "org.alacritty" && // ~/.alacritty.toml: window.decorations = "Buttonless"
+        app.id != "net.kovidgoyal.kitty" && // ~/.config/kitty/kitty.conf: hide_window_decorations titlebar-and-corners
+        app.id != "com.mitchellh.ghostty" && // ~/.config/ghostty/config: window-decoration = false
+        app.id != "com.github.wez.wezterm" &&
+        app.id != "com.googlecode.iterm2" &&
+        app.id != "org.gnu.Emacs"
+    {
+        return true
+    }
+    return false
+}
+
+// 'isDialogHeuristic' function name is referenced in the guide
+func isDialogHeuristicNew(_ axWindow: AXUIElement, _ app: AppActor) -> Bool { // todo rename to isDialogHeuristic
+    // Note: a lot of windows don't have title on startup. So please don't rely on the title
+
+    // Don't tile:
+    // - Chrome cmd+f window ("AXUnknown" value)
+    // - login screen (Yes fuck, it's also a window from Apple's API perspective) ("AXUnknown" value)
+    // - XCode "Build succeeded" popup
+    // - IntelliJ tooltips, context menus, drop downs
+    // - macOS native file picker (IntelliJ -> "Open...") (kAXDialogSubrole value)
+    //
+    // Minimized windows or windows of a hidden app have subrole "AXDialog"
+    if axWindow.get(Ax.subroleAttr) != kAXStandardWindowSubrole {
+        return true
+    }
+    // Firefox: Picture in Picture window doesn't have minimize button.
+    // todo. bug: when firefox shows non-native fullscreen, minimize button is disabled for all other non-fullscreen windows
     if app.isFirefox() && axWindow.get(Ax.minimizeButtonAttr)?.get(Ax.enabledAttr) != true {
         return true
     }

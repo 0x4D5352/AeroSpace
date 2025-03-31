@@ -168,6 +168,18 @@ final class AppActor {
         }
     }
 
+    func dumpWindowAx(windowId: UInt32, _ prefix: String) async throws(CancellationError) -> String {
+        try await withWindow(windowId) { window, job in
+            dumpAx(window, prefix, .window)
+        } ?? ""
+    }
+
+    func dumpAppAx(_ prefix: String) async throws(CancellationError) -> String {
+        try await getThreadOrThrow().runInLoop { [axApp] job in
+            dumpAx(axApp.unsafe, prefix, .app)
+        }
+    }
+
     // @MainActor
     // static func detectNewAppsAndWindows(startup: Bool) async throws(CancellationError) {
     //     var result = [any AbstractApp]()
@@ -235,7 +247,7 @@ final class AppActor {
         throw CancellationError()
     }
 
-    private func withWindow<T>(_ windowId: UInt32, _ body: @Sendable @escaping (AXUIElement, RunLoopJob) -> T?) async throws(CancellationError) -> T? {
+    private func withWindow<T>(_ windowId: UInt32, _ body: @Sendable @escaping (AXUIElement, RunLoopJob) -> T) async throws(CancellationError) -> T? {
         try await getThreadOrThrow().runInLoop { [windows] job in
             guard let window = windows.unsafe[windowId] else { return nil }
             return body(window, job)
@@ -303,6 +315,12 @@ public final class UnsafeSendable<T>: Sendable {
 }
 
 public typealias Continuation<T> = CheckedContinuation<T, Never>
+
+extension AppActor { // todo. Drop once AppActor conforms to AbstractApp
+    func isFirefox() -> Bool {
+        ["org.mozilla.firefox", "org.mozilla.firefoxdeveloperedition", "org.mozilla.nightly"].contains(id ?? "")
+    }
+}
 
 // var allAppsMap: Bar = Bar()
 

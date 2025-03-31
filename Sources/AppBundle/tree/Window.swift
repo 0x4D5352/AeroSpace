@@ -2,7 +2,7 @@ import AppKit
 import Common
 
 class Window: TreeNode, Hashable {
-    nonisolated let windowId: UInt32
+    nonisolated let windowId: UInt32 // todo nonisolated keyword is no longer necessary?
     let app: any AbstractApp
     override var parent: NonLeafTreeNodeObject { super.parent ?? errorT("Windows always have parent") }
     var parentOrNilForTests: NonLeafTreeNodeObject? { super.parent }
