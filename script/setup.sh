@@ -41,7 +41,7 @@ xcodebuild() {
     # Thread:   <_NSMainThread: 0x6000037202c0>{number = 1, name = main}
     # Please file a bug at https://feedbackassistant.apple.com with this warning message and any useful information you can provide.
     if /usr/bin/which xcbeautify &> /dev/null; then
-        /usr/bin/xcodebuild "$@" 2>&1 | xcbeautify --quiet # Only print tasks that have warnings or errors
+        /usr/bin/xcodebuild "$@" 2>&1 #| xcbeautify --quiet # Only print tasks that have warnings or errors
     else
         /usr/bin/xcodebuild "$@" 2>&1
     fi
