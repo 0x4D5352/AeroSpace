@@ -34,7 +34,7 @@ include::util/all-monitors-option.adoc[]
 --focused::
 Print the focused window.
 Please note that it is possible for no window to be in focus.
-In that case, error is reported.
+In that case, an error is reported.
 
 --workspace <workspace>...::
 Filter results to only print windows that belong to either of specified workspaces.
